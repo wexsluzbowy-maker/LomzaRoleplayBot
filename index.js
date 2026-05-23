@@ -1,6 +1,6 @@
 // ========================================================
 // LOMZA RP - ULTIMATE VERIFICATION BOT 2025
-// Wersja: Finalna (Status Graczy + Apelacje + Logi + CRITICAL FIX)
+// Wersja: Finalna (Status Graczy + Apelacje + Logi + TOTAL FIX)
 // ========================================================
 
 const {
@@ -206,7 +206,9 @@ async function handleUnlink(i) {
     if (dId) {
         await db.delete(`robloxUser_${rid}`);
         await db.delete(`user_${dId}`);
-        const guild = await i.client.guilds.fetch(CONFIG.GUILD_ID).catch(() => null);
+        
+        // Zabezpieczone odwołanie globalne
+        const guild = i.guild || await client.guilds.fetch(CONFIG.GUILD_ID).catch(() => null);
         if (guild) {
             const member = await guild.members.fetch(dId).catch(() => null);
             if (member) await member.roles.remove(CONFIG.ROLE_OBYWATEL).catch(() => {});
@@ -285,11 +287,12 @@ async function checkRobloxProfile(i) {
     }
 
     try {
-        // ZMIANA: użycie i.client zamiast globalnego obiektu client
-        const guild = await i.client.guilds.fetch(CONFIG.GUILD_ID).catch(() => null);
+        // Pętla ratunkowa: Najpierw sprawdź serwer z interakcji, jeśli nie ma - użyj globalnego klienta
+        const guild = i.guild || await client.guilds.fetch(CONFIG.GUILD_ID).catch(() => null);
+        
         if (!guild) {
-            console.error("❌ Nie znaleziono serwera o podanym GUILD_ID. Sprawdź plik .env!");
-            return i.reply({ content: "❌ Błąd bota: nieprawidłowe GUILD_ID w pliku .env.", flags: MessageFlags.Ephemeral });
+            console.error("❌ Nie można uzyskać dostępu do serwera. Sprawdź GUILD_ID w .env!");
+            return i.reply({ content: "❌ Błąd konfiguracji: bot nie ma dostępu do serwera.", flags: MessageFlags.Ephemeral });
         }
 
         const chan = await guild.channels.fetch(CONFIG.LOGS_CHECK).catch(() => null);
@@ -307,12 +310,12 @@ async function checkRobloxProfile(i) {
             );
             await chan.send({ embeds: [embed], components: [row] });
         } else {
-            console.error("❌ Nie znaleziono kanału o ID z LOGS_CHECK. Sprawdź plik .env!");
-            return i.reply({ content: "❌ Błąd bota: nieprawidłowy kanał LOGS_CHECK w pliku .env.", flags: MessageFlags.Ephemeral });
+            console.error("❌ Kanał LOGS_CHECK nie istnieje lub bot nie ma do niego uprawnień.");
+            return i.reply({ content: "❌ Błąd konfiguracji logów weryfikacji.", flags: MessageFlags.Ephemeral });
         }
     } catch (error) {
-        console.error("❌ Wystąpił błąd w checkRobloxProfile:", error);
-        return i.reply({ content: "❌ Wystąpił błąd podczas przetwarzania żądania.", flags: MessageFlags.Ephemeral });
+        console.error("❌ Błąd krytyczny w checkRobloxProfile:", error);
+        return i.reply({ content: "❌ Wystąpił błąd wewnętrzny aplikacji bota.", flags: MessageFlags.Ephemeral });
     }
 
     await i.reply({ content: "✅ Wysłano do administracji.", flags: MessageFlags.Ephemeral });
@@ -320,7 +323,7 @@ async function checkRobloxProfile(i) {
 
 async function adminDecision(i) {
     const [action, dId, rid] = i.customId.split('_');
-    const guild = await i.client.guilds.fetch(CONFIG.GUILD_ID).catch(() => null);
+    const guild = i.guild || await client.guilds.fetch(CONFIG.GUILD_ID).catch(() => null);
     if (!guild) return i.reply({ content: "❌ Błąd krytyczny serwera.", flags: MessageFlags.Ephemeral });
 
     const member = await guild.members.fetch(dId).catch(() => null);
@@ -363,7 +366,7 @@ async function handleBan(i, perm) {
 
     await db.set(`ban_${rid}`, { reason, expires: expiry, moderator: i.user.id });
 
-    const banLog = await i.guild.channels.fetch(CONFIG.LOGS_BAN).catch(() => null);
+    const banLog = i.guild ? await i.guild.channels.fetch(CONFIG.LOGS_BAN).catch(() => null) : null;
     if (banLog) {
         const timeStr = perm ? "Zawsze" : `${mins}m`;
         const embed = new EmbedBuilder()
@@ -377,7 +380,7 @@ async function handleBan(i, perm) {
     }
 
     if (dId) {
-        const guild = await i.client.guilds.fetch(CONFIG.GUILD_ID).catch(() => null);
+        const guild = i.guild || await client.guilds.fetch(CONFIG.GUILD_ID).catch(() => null);
         if (guild) {
             const member = await guild.members.fetch(dId).catch(() => null);
             if (member) {
@@ -421,7 +424,7 @@ async function startAppealModal(i) {
 async function handleAppealSubmit(i) {
     const rid = i.customId.split('_')[2];
     const text = i.fields.getTextInputValue('appeal_text');
-    const guild = await i.client.guilds.fetch(CONFIG.GUILD_ID).catch(() => null);
+    const guild = i.guild || await client.guilds.fetch(CONFIG.GUILD_ID).catch(() => null);
     if (guild) {
         const chan = await guild.channels.fetch(CONFIG.LOGS_APPEAL).catch(() => null);
         if (chan) {
@@ -446,7 +449,7 @@ async function handleAppealSubmit(i) {
 
 async function adminAppealDecision(i) {
     const [,, rid, dId] = i.customId.split('_');
-    const guild = await i.client.guilds.fetch(CONFIG.GUILD_ID).catch(() => null);
+    const guild = i.guild || await client.guilds.fetch(CONFIG.GUILD_ID).catch(() => null);
     if (!guild) return i.reply({ content: "❌ Błąd krytyczny serwera.", flags: MessageFlags.Ephemeral });
 
     const member = await guild.members.fetch(dId).catch(() => null);
