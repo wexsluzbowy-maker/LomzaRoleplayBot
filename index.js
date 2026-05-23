@@ -1,12 +1,13 @@
 // ========================================================
 // LOMZA RP - ULTIMATE VERIFICATION BOT 2025
-// Wersja: Finalna (Status Graczy + Apelacje + Logi + TOTAL FIX)
+// Wersja: Finalna (Status Graczy + Apelacje + Logi + CHAN SEND FIX)
 // ========================================================
 
 const {
     Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder,
     ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder,
-    TextInputStyle, MessageFlags, Events, Collection, ActivityType, Partials
+    TextInputStyle, MessageFlags, Events, Collection, ActivityType, Partials,
+    ChannelType // DODANO: Import typu kanałów dla weryfikacji
 } = require('discord.js');
 
 const axios = require('axios');
@@ -207,7 +208,6 @@ async function handleUnlink(i) {
         await db.delete(`robloxUser_${rid}`);
         await db.delete(`user_${dId}`);
         
-        // Zabezpieczone odwołanie globalne
         const guild = i.guild || await client.guilds.fetch(CONFIG.GUILD_ID).catch(() => null);
         if (guild) {
             const member = await guild.members.fetch(dId).catch(() => null);
@@ -277,6 +277,7 @@ async function handleVerifySubmit(i) {
     await i.reply({ embeds: [embed], components: [row], flags: MessageFlags.Ephemeral });
 }
 
+// --- POPRAWIONA I ABSOLUTNIE ZABEZPIECZONA FUNKCJA ---
 async function checkRobloxProfile(i) {
     const session = pendingVerifications.get(i.user.id);
     if (!session) return i.reply({ content: "❌ Błąd sesji.", flags: MessageFlags.Ephemeral });
@@ -287,16 +288,17 @@ async function checkRobloxProfile(i) {
     }
 
     try {
-        // Pętla ratunkowa: Najpierw sprawdź serwer z interakcji, jeśli nie ma - użyj globalnego klienta
         const guild = i.guild || await client.guilds.fetch(CONFIG.GUILD_ID).catch(() => null);
         
         if (!guild) {
             console.error("❌ Nie można uzyskać dostępu do serwera. Sprawdź GUILD_ID w .env!");
-            return i.reply({ content: "❌ Błąd konfiguracji: bot nie ma dostępu do serwera.", flags: MessageFlags.Ephemeral });
+            return i.reply({ content: "❌ Błąd konfiguracji serwera bota.", flags: MessageFlags.Ephemeral });
         }
 
         const chan = await guild.channels.fetch(CONFIG.LOGS_CHECK).catch(() => null);
-        if (chan) {
+        
+        // POPRAWA BŁĘDU: Sprawdzamy czy kanał istnieje ORAZ czy jest kanałem tekstowym (.isTextBased())
+        if (chan && typeof chan.send === 'function' && chan.isTextBased()) {
             const embed = new EmbedBuilder()
                 .setTitle('Nowa Weryfikacja')
                 .setColor('#3498db')
@@ -310,8 +312,8 @@ async function checkRobloxProfile(i) {
             );
             await chan.send({ embeds: [embed], components: [row] });
         } else {
-            console.error("❌ Kanał LOGS_CHECK nie istnieje lub bot nie ma do niego uprawnień.");
-            return i.reply({ content: "❌ Błąd konfiguracji logów weryfikacji.", flags: MessageFlags.Ephemeral });
+            console.error(`❌ Podane ID kanału LOGS_CHECK (${CONFIG.LOGS_CHECK}) nie odnosi się do kanału tekstowego lub bot nie ma uprawnień do pisania.`);
+            return i.reply({ content: "❌ ID kanału weryfikacji w .env nie prowadzi do prawidłowego kanału tekstowego!", flags: MessageFlags.Ephemeral });
         }
     } catch (error) {
         console.error("❌ Błąd krytyczny w checkRobloxProfile:", error);
@@ -335,13 +337,13 @@ async function adminDecision(i) {
         await db.set(`robloxUser_${rid}`, dId);
         if (member) await member.roles.add(CONFIG.ROLE_OBYWATEL).catch(() => {});
 
-        if (logChan) {
+        if (logChan && typeof logChan.send === 'function') {
             const logEmbed = new EmbedBuilder()
                 .setAuthor({ name: 'Użytkownik zweryfikowany' })
                 .setColor('#43b581')
                 .setDescription(`**Discord**\n<@${dId}>\n\n**Roblox**\n${roblox.data?.displayName} (\`${rid}\`)\n\n**Wiek konta**\n${getAccountAge(roblox.data?.created)}\n\n**Administrator**\n<@${i.user.id}>`)
                 .setTimestamp();
-            await logChan.send({ embeds: [logEmbed] });
+            await logChan.send({ embeds: [logEmbed] }).catch(() => {});
         }
         if (member) member.send("✅ Twoja weryfikacja na **Lomza RP** została zaakceptowana!").catch(() => {});
         await i.update({ content: `✅ Zaakceptowano <@${dId}>`, components: [] });
@@ -367,7 +369,7 @@ async function handleBan(i, perm) {
     await db.set(`ban_${rid}`, { reason, expires: expiry, moderator: i.user.id });
 
     const banLog = i.guild ? await i.guild.channels.fetch(CONFIG.LOGS_BAN).catch(() => null) : null;
-    if (banLog) {
+    if (banLog && typeof banLog.send === 'function') {
         const timeStr = perm ? "Zawsze" : `${mins}m`;
         const embed = new EmbedBuilder()
             .setTitle('🔐 Zbanowano Gracza')
@@ -427,7 +429,7 @@ async function handleAppealSubmit(i) {
     const guild = i.guild || await client.guilds.fetch(CONFIG.GUILD_ID).catch(() => null);
     if (guild) {
         const chan = await guild.channels.fetch(CONFIG.LOGS_APPEAL).catch(() => null);
-        if (chan) {
+        if (chan && typeof chan.send === 'function') {
             const embed = new EmbedBuilder()
                 .setTitle('⚖️ Nowa apelacja')
                 .setColor('#f1c40f')
@@ -440,7 +442,7 @@ async function handleAppealSubmit(i) {
                 new ButtonBuilder().setCustomId(`app_acc_${rid}_${i.user.id}`).setLabel('Zaakceptuj').setStyle(ButtonStyle.Success),
                 new ButtonBuilder().setCustomId(`app_rej_${rid}_${i.user.id}`).setLabel('Odrzuć').setStyle(ButtonStyle.Danger)
             );
-            await chan.send({ embeds: [embed], components: [row] });
+            await chan.send({ embeds: [embed], components: [row] }).catch(() => {});
         }
     }
     console.log(`⚖️ Nowa apelacja od ${i.user.tag} (Roblox ID: ${rid})`);
