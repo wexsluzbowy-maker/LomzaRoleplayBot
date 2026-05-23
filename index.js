@@ -1,6 +1,6 @@
 // ========================================================
 // LOMZA RP - ULTIMATE BOT 2026 WITH TICKETS
-// Wersja: MAX PREMIUM + ADVANCED TICKET SYSTEM (FIXED)
+// Wersja: MAX PREMIUM + ADVANCED TICKET SYSTEM + DM NOTIFY
 // ========================================================
 
 const {
@@ -221,8 +221,53 @@ client.on(Events.InteractionCreate, async (i) => {
             if (i.customId.startsWith('acc_') || i.customId.startsWith('rej_')) return adminDecision(i);
             if (i.customId.startsWith('appeal_btn_')) return startAppealModal(i);
             if (i.customId.startsWith('app_acc_') || i.customId.startsWith('app_rej_')) return adminAppealDecision(i);
+            
+            // ZAMYKANIE TICKETA Z POWIADOMIENIEM NA PW
             if (i.customId === 'close_ticket') {
-                await i.reply("🔒 Zamykanie ticketu za 3 sekundy...");
+                await i.reply("🔒 Zamykanie ticketu i generowanie podsumowania na PW...");
+
+                const channelName = i.channel.name;
+                const parts = channelName.split('-');
+                
+                // Próba wykrycia właściciela ticketu za pomocą uprawnień nadpisanych na kanale
+                const originalMember = i.channel.permissionOverwrites.cache
+                    .filter(overwrite => overwrite.type === 1 && overwrite.id !== client.user.id && overwrite.id !== CONFIG.ROLE_ADMINISTRACJA && overwrite.id !== i.guild.roles.everyone.id)
+                    .first();
+
+                const ticketNames = {
+                    'pomoc-ogolna': 'Pomoc Ogólna',
+                    'ck-fck': 'CK / FCK',
+                    'weryfikacja': 'Weryfikacja',
+                    'pojazdy': 'Pojazdy',
+                    'zglos-gracza': 'Zgłoś Gracza'
+                };
+
+                let ticketType = 'Nieznany';
+                if (parts[1]) {
+                    ticketType = ticketNames[parts[1]] || parts[1].toUpperCase();
+                }
+
+                if (originalMember) {
+                    const targetUser = await i.guild.members.fetch(originalMember.id).catch(() => null);
+                    if (targetUser) {
+                        const dmEmbed = new EmbedBuilder()
+                            .setTitle('🔒 Twój ticket został zamknięty')
+                            .setDescription(`Twój wniosek na serwerze **Łomża Roleplay** został pomyślnie rozpatrzony i zamknięty przez administrację.`)
+                            .setColor('#2b2d31')
+                            .addFields(
+                                { name: '🎫 Typ zgłoszenia', value: `> \`${ticketType}\``, inline: true },
+                                { name: '🛠️ Zamknął administrator', value: `> ${i.user} (\`${i.user.username}\`)`, inline: true },
+                                { name: '⏰ Data zamknięcia', value: `> <t:${Math.floor(Date.now() / 1000)}:F>`, inline: false }
+                            )
+                            .setThumbnail(i.guild.iconURL({ dynamic: true }))
+                            .setFooter({ text: 'Łomża Roleplay • System Wspierający', iconURL: i.guild.iconURL() });
+
+                        await targetUser.send({ embeds: [dmEmbed] }).catch(() => {
+                            console.log(`⚠️ Nie można było wysłać PW do ${targetUser.user.username} (Prawdopodobnie ma wyłączone prywatne wiadomości na tym serwerze).`);
+                        });
+                    }
+                }
+
                 setTimeout(() => i.channel.delete().catch(() => {}), 3000);
             }
         }
@@ -270,7 +315,6 @@ async function handleTicketCreation(i) {
     const option = i.values[0];
     const categoryId = CONFIG.TICKET_CATEGORY_ID;
     
-    // Sztywna mapa ładnych nazw (naprawa błędu z undefined 'find')
     const ticketNames = {
         'pomoc_ogolna': 'Pomoc Ogólna',
         'ck_fck': 'CK / FCK',
@@ -363,7 +407,7 @@ async function handleCheckPlayer(i) {
             const ageInfo = getAccountAge(roblox.data.created);
             embed.setThumbnail(roblox.avatar);
             embed.addFields(
-                { name: '🎮 Połączone Konto Roblox', value: `> **Nazwa użytkownika:** \`${roblox.data.name}\`\n> **Wyświetlana nazwa:** \`${roblox.data.displayName}\`\n> **ID Konta:** \`${robloxId}\`\n> **Data rejestracji:** ${formatPolishDate(roblox.data.created)}\n> **Wiek konta:** ${ageInfo.text}\n> **Profil:** [Kliknij aby otworzyć](https://www.roblox.com/users/${robloxId}/profile)`, inline: false }
+                { name: '🎮 Połączone Konto Roblox', value: `> **Nazwa użytkownika:** \`${roblox.data.name}\`\n> **Wyświetlana nazwa:** \`${roblox.data.displayName}\`\n> **ID Konta:** \`${robloxId}\`\n> **Data rejestracji:** ${formatPolishDate(roblox.data.created)}\n> **Wiek konto:** ${ageInfo.text}\n> **Profil:** [Kliknij aby otworzyć](https://www.roblox.com/users/${robloxId}/profile)`, inline: false }
             );
 
             const banData = await db.get(`ban_${robloxId}`);
