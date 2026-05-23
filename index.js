@@ -1,6 +1,6 @@
 // ========================================================
 // LOMZA RP - ULTIMATE VERIFICATION BOT 2026
-// Wersja: MAX PREMIUM (Rozbudowane Logi, Profile, Systemy Alertów)
+// Wersja: MAX PREMIUM (Zoptymalizowany pod wzór logów banów)
 // ========================================================
 
 const {
@@ -251,7 +251,7 @@ async function handleCheckPlayer(i) {
                 { name: '🎮 Połączone Konto Roblox', value: `> **Nazwa użytkownika:** \`${roblox.data.name}\`\n> **Wyświetlana nazwa:** \`${roblox.data.displayName}\`\n> **ID Konta:** \`${robloxId}\`\n> **Data rejestracji:** ${formatPolishDate(roblox.data.created)}\n> **Wiek konta:** ${ageInfo.text}\n> **Profil:** [Kliknij aby otworzyć](https://www.roblox.com/users/${robloxId}/profile)`, inline: false }
             );
 
-            // 3. Sekcja Blokad (sprawdzana tylko, jeśli konto ma powiązany robloxId)
+            // 3. Sekcja Blokad
             const banData = await db.get(`ban_${robloxId}`);
             if (banData) {
                 let statusBana = `> **Typ:** Permanentny 🚫\n`;
@@ -354,7 +354,6 @@ async function handleVerifySubmit(i) {
     await i.reply({ embeds: [embed], components: [row], flags: MessageFlags.Ephemeral });
 }
 
-// --- MAKSYMALNE LOGI AKCEPTACJI (LOGS_CHECK) ---
 async function checkRobloxProfile(i) {
     const session = pendingVerifications.get(i.user.id);
     if (!session) return i.reply({ content: "❌ Twoja sesja wygasła. Spróbuj ponownie.", flags: MessageFlags.Ephemeral });
@@ -404,7 +403,6 @@ async function checkRobloxProfile(i) {
     await i.reply({ content: "✅ Twój profil został wysłany do weryfikacji przez Administrację Serwera. Oczekuj na odpowiedź!", flags: MessageFlags.Ephemeral });
 }
 
-// --- ROZBUDOWANE LOGI DECYZJI ADMINA (LOGS_VERIFY) ---
 async function adminDecision(i) {
     const [action, dId, rid] = i.customId.split('_');
     const guild = i.guild || await client.guilds.fetch(CONFIG.GUILD_ID).catch(() => null);
@@ -451,36 +449,57 @@ async function adminDecision(i) {
     }
 }
 
-// ====================== ROZBUDOWANE BANY ======================
+// ====================== ODNOWIONY SYSTEM BANÓW (STYL ZE ZDJĘCIA) ======================
 
 async function handleBan(i, perm) {
     await i.deferReply({ flags: MessageFlags.Ephemeral });
     const rid = i.options.getString('id').trim();
     const reason = i.options.getString('powod');
-    const mins = perm ? null : i.options.getInteger('czas');
-    const expiry = mins ? Date.now() + (mins * 60000) : null;
-    const roblox = await getRobloxInfo(rid);
-    const dId = await db.get(`robloxUser_${rid}`);
+    
+    let mins = null;
+    let expiry = null;
+    let timeStr = "Na zawsze";
+    let expiryStr = "Nigdy";
+
+    if (!perm) {
+        mins = i.options.getInteger('czas');
+        expiry = Date.now() + (mins * 60000);
+        
+        if (mins >= 1440) {
+            timeStr = `${Math.round(mins / 1440)}d`;
+        } else {
+            timeStr = `${mins}m`;
+        }
+        
+        const unixTimestamp = Math.floor(expiry / 1000);
+        expiryStr = `<t:${unixTimestamp}:F>`; 
+    }
 
     await db.set(`ban_${rid}`, { reason, expires: expiry, moderator: i.user.id, timestamp: Date.now() });
+    const roblox = await getRobloxInfo(rid);
 
     const banLog = i.guild ? await i.guild.channels.fetch(CONFIG.LOGS_BAN).catch(() => null) : null;
     if (banLog && typeof banLog.send === 'function') {
-        const timeStr = perm ? "Permanentna (Bezterminowo) 🚫" : `${mins} minut(y) ⏳`;
-        const embed = new EmbedBuilder()
-            .setTitle('🔐 Rejestracja Blokady Serwerowej')
-            .setThumbnail(roblox.avatar)
-            .setColor('#c0392b')
-            .addFields(
-                { name: '🎮 Dane zablokowanego konta', value: `> **Nazwa Roblox:** \`${roblox.data?.name || 'Nieznany'}\`\n> **ID Roblox:** \`${rid}\`\n> **Powiązany Discord:** ${dId ? `<@${dId}>` : '`Brak powiązania`'}`, inline: false },
-                { name: '📝 Specyfikacja kary', value: `> **Powód:** \`${reason}\`\n> **Czas trwania:** ${timeStr}\n> **Executor:** ${i.user}`, inline: false }
-            )
-            .setTimestamp();
         
+        const embed = new EmbedBuilder()
+            .setTitle('🔐 Zbanowano Gracza')
+            .setColor('#107bc4') // Oryginalny błękitny odcień paska ze zdjęcia
+            .setThumbnail(roblox.avatar || 'https://www.roblox.com/headshot-thumbnail/image?userId=1&width=420&height=420&format=png')
+            .setDescription(
+                `Zbanowany gracz nie może grać do czasu upłynięcia blokady.\n` +
+                `Gracz **${roblox.data?.name || 'Nieznany'} (${rid})** został zablokowany na **${timeStr}**.\n` +
+                `Blokada minie ${expiryStr}\n\n` +
+                `**Powód** ${reason}\n\n` +
+                `Zbanowano przez ${i.user.username}`
+            );
+        
+        const dId = await db.get(`robloxUser_${rid}`);
         const pingContent = dId ? `<@${dId}>` : `Roblox ID: ${rid}`;
+        
         await banLog.send({ content: pingContent, embeds: [embed] }).catch(() => {});
     }
 
+    const dId = await db.get(`robloxUser_${rid}`);
     if (dId) {
         const guild = i.guild || await client.guilds.fetch(CONFIG.GUILD_ID).catch(() => null);
         if (guild) {
@@ -489,7 +508,7 @@ async function handleBan(i, perm) {
                 const pvEmbed = new EmbedBuilder()
                     .setTitle("🚫 Zostałeś Zablokowany globalnie w grze")
                     .setColor('#ff0000')
-                    .setDescription(`Twój dostęp do rozgrywki na serwerze **Lomza RP** został zablokowany.\n\n> **Powód:** \`${reason}\`\n> **Ważność:** ${perm ? 'Na zawsze' : mins + ' min.'}\n\nJeśli uważasz, że kara została nadana niesłusznie, możesz złożyć oficjalną apelację klikając poniższy przycisk.`)
+                    .setDescription(`Twój dostęp do rozgrywki na serwerze **Lomza RP** został zablokowany.\n\n> **Powód:** \`${reason}\`\n> **Ważność:** ${timeStr}\n> **Wygasa:** ${expiryStr}\n\nJeśli uważasz, że kara została nadana niesłusznie, możesz złożyć oficjalną apelację klikając poniższy przycisk.`)
                     .setTimestamp();
                 const row = new ActionRowBuilder().addComponents(
                     new ButtonBuilder()
@@ -502,10 +521,10 @@ async function handleBan(i, perm) {
         }
     }
     
-    await i.editReply(`✅ Pomyślnie zautoryzowano i zarejestrowano blokadę dla konta **${rid}**.`);
+    await i.editReply(`✅ Pomyślnie zautoryzowano i zarejestrowano blokadę na czas **${timeStr}**.`);
 }
 
-// ====================== ROZBUDOWANE APELACJE (LOGI + DECYZJE) ======================
+// ====================== APELACJE ======================
 
 async function startAppealModal(i) {
     const rid = i.customId.split('_')[2];
@@ -522,7 +541,6 @@ async function startAppealModal(i) {
     await i.showModal(modal);
 }
 
-// --- MAKSYMALNE LOGI WPŁYWU APELACJI (LOGS_APPEAL) ---
 async function handleAppealSubmit(i) {
     const rid = i.customId.split('_')[2];
     const text = i.fields.getTextInputValue('appeal_text');
