@@ -56,7 +56,6 @@ function updateBotStatus() {
     });
 }
 
-// Endpoint do aktualizacji graczy z Roblox (POST na /update-players)
 app.post('/update-players', (req, res) => {
     const { playerCount } = req.body;
     if (typeof playerCount !== 'undefined') {
@@ -79,14 +78,12 @@ app.get('/check-access/:robloxId', async (req, res) => {
         return res.status(200).json({ allowed: true });
     }
 
-    // Sprawdź czy ban jest czasowy i wygasł
     if (banData.expires && banData.expires < Date.now()) {
         await db.delete(`ban_${rid}`);
         console.log(`✅ Ban dla ${rid} wygasł automatycznie`);
         return res.status(200).json({ allowed: true });
     }
 
-    // Gracz jest zbanowany
     console.log(`🚫 Zablokowano dostęp dla Roblox ID: ${rid}`);
     return res.status(200).json({
         allowed: false,
@@ -154,8 +151,12 @@ client.once(Events.ClientReady, async () => {
         ]}
     ];
 
-    await client.application.commands.set(commands);
-    console.log(`✅ Zarejestrowano ${commands.length} komend slash`);
+    try {
+        await client.application.commands.set(commands);
+        console.log(`✅ Zarejestrowano ${commands.length} komend slash`);
+    } catch (err) {
+        console.error("❌ Błąd podczas rejestracji komend slash:", err);
+    }
 });
 
 // ====================== INTERAKCJE ======================
@@ -205,9 +206,11 @@ async function handleUnlink(i) {
     if (dId) {
         await db.delete(`robloxUser_${rid}`);
         await db.delete(`user_${dId}`);
-        const guild = client.guilds.cache.get(CONFIG.GUILD_ID);
-        const member = await guild.members.fetch(dId).catch(() => null);
-        if (member) await member.roles.remove(CONFIG.ROLE_OBYWATEL).catch(() => {});
+        const guild = await client.guilds.fetch(CONFIG.GUILD_ID).catch(() => null);
+        if (guild) {
+            const member = await guild.members.fetch(dId).catch(() => null);
+            if (member) await member.roles.remove(CONFIG.ROLE_OBYWATEL).catch(() => {});
+        }
         console.log(`🔓 Odłączono konto Roblox ${rid} od Discord ${dId}`);
         return i.reply({ content: `✅ Rozłączono konto ${rid}.`, flags: MessageFlags.Ephemeral });
     }
@@ -272,6 +275,7 @@ async function handleVerifySubmit(i) {
     await i.reply({ embeds: [embed], components: [row], flags: MessageFlags.Ephemeral });
 }
 
+// --- POPRAWIONA FUNKCJA ZABEZPIECZONA PRZED BŁĘDEM ---
 async function checkRobloxProfile(i) {
     const session = pendingVerifications.get(i.user.id);
     if (!session) return i.reply({ content: "❌ Błąd sesji.", flags: MessageFlags.Ephemeral });
@@ -281,31 +285,47 @@ async function checkRobloxProfile(i) {
         return i.reply({ content: "❌ Brak słowa w opisie.", flags: MessageFlags.Ephemeral });
     }
 
-    const guild = client.guilds.cache.get(CONFIG.GUILD_ID);
-    const chan = guild.channels.cache.get(CONFIG.LOGS_CHECK);
-    if (chan) {
-        const embed = new EmbedBuilder()
-            .setTitle('Nowa Weryfikacja')
-            .setColor('#3498db')
-            .addFields(
-                { name: 'Discord', value: `<@${i.user.id}>` }, 
-                { name: 'Roblox', value: `${roblox.data.displayName} (${session.rid})` }
+    try {
+        const guild = await client.guilds.fetch(CONFIG.GUILD_ID).catch(() => null);
+        if (!guild) {
+            console.error("❌ Nie znaleziono serwera o podanym GUILD_ID. Sprawdź plik .env!");
+            return i.reply({ content: "❌ Błąd bota: nieprawidłowe GUILD_ID w pliku .env.", flags: MessageFlags.Ephemeral });
+        }
+
+        const chan = await guild.channels.fetch(CONFIG.LOGS_CHECK).catch(() => null);
+        if (chan) {
+            const embed = new EmbedBuilder()
+                .setTitle('Nowa Weryfikacja')
+                .setColor('#3498db')
+                .addFields(
+                    { name: 'Discord', value: `<@${i.user.id}>` }, 
+                    { name: 'Roblox', value: `${roblox.data.displayName} (${session.rid})` }
+                );
+            const row = new ActionRowBuilder().addComponents(
+                new ButtonBuilder().setCustomId(`acc_${i.user.id}_${session.rid}`).setLabel('Akceptuj').setStyle(ButtonStyle.Success),
+                new ButtonBuilder().setCustomId(`rej_${i.user.id}_${session.rid}`).setLabel('Odrzuć').setStyle(ButtonStyle.Danger)
             );
-        const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId(`acc_${i.user.id}_${session.rid}`).setLabel('Akceptuj').setStyle(ButtonStyle.Success),
-            new ButtonBuilder().setCustomId(`rej_${i.user.id}_${session.rid}`).setLabel('Odrzuć').setStyle(ButtonStyle.Danger)
-        );
-        await chan.send({ embeds: [embed], components: [row] });
+            await chan.send({ embeds: [embed], components: [row] });
+        } else {
+            console.error("❌ Nie znaleziono kanału o ID z LOGS_CHECK. Sprawdź plik .env!");
+            return i.reply({ content: "❌ Błąd bota: nieprawidłowy kanał LOGS_CHECK w pliku .env.", flags: MessageFlags.Ephemeral });
+        }
+    } catch (error) {
+        console.error("❌ Wystąpił błąd w checkRobloxProfile:", error);
+        return i.reply({ content: "❌ Wystąpił błąd podczas przetwarzania żądania.", flags: MessageFlags.Ephemeral });
     }
+
     await i.reply({ content: "✅ Wysłano do administracji.", flags: MessageFlags.Ephemeral });
 }
 
 async function adminDecision(i) {
     const [action, dId, rid] = i.customId.split('_');
-    const guild = client.guilds.cache.get(CONFIG.GUILD_ID);
+    const guild = await client.guilds.fetch(CONFIG.GUILD_ID).catch(() => null);
+    if (!guild) return i.reply({ content: "❌ Błąd krytyczny serwera.", flags: MessageFlags.Ephemeral });
+
     const member = await guild.members.fetch(dId).catch(() => null);
     const roblox = await getRobloxInfo(rid);
-    const logChan = guild.channels.cache.get(CONFIG.LOGS_VERIFY);
+    const logChan = await guild.channels.fetch(CONFIG.LOGS_VERIFY).catch(() => null);
 
     if (action === 'acc') {
         await db.set(`user_${dId}`, rid);
@@ -343,7 +363,7 @@ async function handleBan(i, perm) {
 
     await db.set(`ban_${rid}`, { reason, expires: expiry, moderator: i.user.id });
 
-    const banLog = i.guild.channels.cache.get(CONFIG.LOGS_BAN);
+    const banLog = await i.guild.channels.fetch(CONFIG.LOGS_BAN).catch(() => null);
     if (banLog) {
         const timeStr = perm ? "Zawsze" : `${mins}m`;
         const embed = new EmbedBuilder()
@@ -352,28 +372,29 @@ async function handleBan(i, perm) {
             .setColor('#2f3136')
             .setDescription(`Zbanowany gracz nie może grać do czasu upłynięcia blokady.\nGracz **${roblox.data?.displayName || 'Nieznany'} (${rid})** został zablokowany na **${timeStr}**.\n\n**Powód** ${reason}\n\nZbanowano przez ${i.user.username}`);
         
-        // FIX: Ping zbanowanego gracza zamiast moderatora
         const pingContent = dId ? `<@${dId}>` : `Roblox ID: ${rid}`;
-        await banLog.send({ content: pingContent, embeds: [embed] });
+        await banLog.send({ content: pingContent, embeds: [embed] }).catch(() => {});
     }
 
     if (dId) {
-        const guild = client.guilds.cache.get(CONFIG.GUILD_ID);
-        const member = await guild.members.fetch(dId).catch(() => null);
-        if (member) {
-            const pvEmbed = new EmbedBuilder()
-                .setTitle("🚫 Zostałeś zablokowany")
-                .setColor('#ff0000')
-                .setDescription(`**Powód:** ${reason}\n**Czas:** ${perm ? 'Permanentnie' : mins + ' min'}\n\nMożesz odwołać się za pomocą przycisku poniżej.`);
-            const row = new ActionRowBuilder().addComponents(
-                new ButtonBuilder()
-                    .setCustomId(`appeal_btn_${rid}`)
-                    .setLabel('Apeluj od bana')
-                    .setStyle(ButtonStyle.Danger)
-            );
-            await member.send({ embeds: [pvEmbed], components: [row] }).catch(err => {
-                console.log(`⚠️ Nie można wysłać PV do ${member.user.tag}:`, err.message);
-            });
+        const guild = await client.guilds.fetch(CONFIG.GUILD_ID).catch(() => null);
+        if (guild) {
+            const member = await guild.members.fetch(dId).catch(() => null);
+            if (member) {
+                const pvEmbed = new EmbedBuilder()
+                    .setTitle("🚫 Zostałeś zablokowany")
+                    .setColor('#ff0000')
+                    .setDescription(`**Powód:** ${reason}\n**Czas:** ${perm ? 'Permanentnie' : mins + ' min'}\n\nMożesz odwołać się za pomocą przycisku poniżej.`);
+                const row = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder()
+                        .setCustomId(`appeal_btn_${rid}`)
+                        .setLabel('Apeluj od bana')
+                        .setStyle(ButtonStyle.Danger)
+                );
+                await member.send({ embeds: [pvEmbed], components: [row] }).catch(err => {
+                    console.log(`⚠️ Nie można wysłać PV do ${member.user.tag}:`, err.message);
+                });
+            }
         }
     }
     
@@ -400,22 +421,24 @@ async function startAppealModal(i) {
 async function handleAppealSubmit(i) {
     const rid = i.customId.split('_')[2];
     const text = i.fields.getTextInputValue('appeal_text');
-    const guild = client.guilds.cache.get(CONFIG.GUILD_ID);
-    const chan = guild.channels.cache.get(CONFIG.LOGS_APPEAL);
-    if (chan) {
-        const embed = new EmbedBuilder()
-            .setTitle('⚖️ Nowa apelacja')
-            .setColor('#f1c40f')
-            .addFields(
-                { name: 'Użytkownik', value: `<@${i.user.id}>` }, 
-                { name: 'ID Roblox', value: rid }, 
-                { name: 'Treść', value: text }
+    const guild = await client.guilds.fetch(CONFIG.GUILD_ID).catch(() => null);
+    if (guild) {
+        const chan = await guild.channels.fetch(CONFIG.LOGS_APPEAL).catch(() => null);
+        if (chan) {
+            const embed = new EmbedBuilder()
+                .setTitle('⚖️ Nowa apelacja')
+                .setColor('#f1c40f')
+                .addFields(
+                    { name: 'Użytkownik', value: `<@${i.user.id}>` }, 
+                    { name: 'ID Roblox', value: rid }, 
+                    { name: 'Treść', value: text }
+                );
+            const row = new ActionRowBuilder().addComponents(
+                new ButtonBuilder().setCustomId(`app_acc_${rid}_${i.user.id}`).setLabel('Zaakceptuj').setStyle(ButtonStyle.Success),
+                new ButtonBuilder().setCustomId(`app_rej_${rid}_${i.user.id}`).setLabel('Odrzuć').setStyle(ButtonStyle.Danger)
             );
-        const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId(`app_acc_${rid}_${i.user.id}`).setLabel('Zaakceptuj').setStyle(ButtonStyle.Success),
-            new ButtonBuilder().setCustomId(`app_rej_${rid}_${i.user.id}`).setLabel('Odrzuć').setStyle(ButtonStyle.Danger)
-        );
-        await chan.send({ embeds: [embed], components: [row] });
+            await chan.send({ embeds: [embed], components: [row] });
+        }
     }
     console.log(`⚖️ Nowa apelacja od ${i.user.tag} (Roblox ID: ${rid})`);
     await i.reply({ content: "✅ Apelacja wysłana.", flags: MessageFlags.Ephemeral });
@@ -423,7 +446,9 @@ async function handleAppealSubmit(i) {
 
 async function adminAppealDecision(i) {
     const [,, rid, dId] = i.customId.split('_');
-    const guild = client.guilds.cache.get(CONFIG.GUILD_ID);
+    const guild = await client.guilds.fetch(CONFIG.GUILD_ID).catch(() => null);
+    if (!guild) return i.reply({ content: "❌ Błąd krytyczny serwera.", flags: MessageFlags.Ephemeral });
+
     const member = await guild.members.fetch(dId).catch(() => null);
 
     if (i.customId.startsWith('app_acc')) {
