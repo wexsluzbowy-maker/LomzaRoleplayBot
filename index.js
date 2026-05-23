@@ -1,6 +1,6 @@
 // ========================================================
 // LOMZA RP - ULTIMATE BOT 2026 WITH TICKETS
-// Wersja: MAX PREMIUM + ADVANCED TICKET SYSTEM
+// Wersja: MAX PREMIUM + ADVANCED TICKET SYSTEM (FIXED)
 // ========================================================
 
 const {
@@ -236,7 +236,7 @@ client.on(Events.InteractionCreate, async (i) => {
     }
 });
 
-// ====================== PANEL TICKETÓW (NOWOŚĆ) ======================
+// ====================== PANEL TICKETÓW ======================
 
 async function setupTicketPanel(i) {
     const embed = new EmbedBuilder()
@@ -270,8 +270,17 @@ async function handleTicketCreation(i) {
     const option = i.values[0];
     const categoryId = CONFIG.TICKET_CATEGORY_ID;
     
+    // Sztywna mapa ładnych nazw (naprawa błędu z undefined 'find')
+    const ticketNames = {
+        'pomoc_ogolna': 'Pomoc Ogólna',
+        'ck_fck': 'CK / FCK',
+        'weryfikacja': 'Weryfikacja',
+        'pojazdy': 'Pojazdy',
+        'zglos_gracza': 'Zgłoś Gracza'
+    };
+
+    let friendlyName = ticketNames[option] || 'Zgłoszenie';
     let topicName = option.replace('_', '-');
-    let friendlyName = i.selectMenuOptions.find(o => o.value === option).label;
 
     await i.deferReply({ flags: MessageFlags.Ephemeral });
 
@@ -295,7 +304,7 @@ async function handleTicketCreation(i) {
             }
         ]
     }).catch(err => {
-        console.error(err);
+        console.error("Błąd tworzenia kanału:", err);
         return null;
     });
 
@@ -693,7 +702,7 @@ async function adminAppealDecision(i) {
         await i.update({ content: `✅ Zaakceptowano odwołanie gracza. Zdjęto blokadę z konta Roblox ID: ${rid}.`, components: [] });
     } else {
         if (member) {
-            await member.send("❌ Twoja apelacja została **odrzucona** przez zarząd projektu. Blokada pozostaje activa.").catch(() => {});
+            await member.send("❌ Twoja apelacja została **odrzucona** przez zarząd projektu. Blokada pozostaje aktywna.").catch(() => {});
         }
         await i.update({ content: `❌ Odrzucono odwołanie gracza. Blokada dla konta Roblox ID: ${rid} pozostaje bez zmian.`, components: [] });
     }
