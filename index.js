@@ -1,13 +1,13 @@
 // ========================================================
-// LOMZA RP - ULTIMATE VERIFICATION BOT 2026
-// Wersja: MAX PREMIUM (Zoptymalizowany pod wzór logów banów)
+// LOMZA RP - ULTIMATE BOT 2026 WITH TICKETS
+// Wersja: MAX PREMIUM + ADVANCED TICKET SYSTEM
 // ========================================================
 
 const {
     Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder,
     ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder,
     TextInputStyle, MessageFlags, Events, Collection, ActivityType, Partials,
-    ChannelType
+    ChannelType, StringSelectMenuBuilder, PermissionFlagsBits
 } = require('discord.js');
 
 const axios = require('axios');
@@ -25,7 +25,8 @@ const AWARYJNA_KONFIGURACJA = {
     LOGS_BAN: "1307827966075605032",
     LOGS_VERIFY: "1432305354145923134",
     LOGS_CHECK: "1496584923576930465", // To o ten kanał prosi bot
-    LOGS_APPEAL: "1432013814685106288"
+    LOGS_APPEAL: "1432013814685106288",
+    TICKET_CATEGORY_ID: "1459234132059226344"
 };
 
 const CONFIG = {
@@ -37,6 +38,7 @@ const CONFIG = {
     LOGS_VERIFY: process.env.LOGS_VERIFY || AWARYJNA_KONFIGURACJA.LOGS_VERIFY,
     LOGS_CHECK: process.env.LOGS_CHECK || AWARYJNA_KONFIGURACJA.LOGS_CHECK,
     LOGS_APPEAL: process.env.LOGS_APPEAL || AWARYJNA_KONFIGURACJA.LOGS_APPEAL,
+    TICKET_CATEGORY_ID: process.env.TICKET_CATEGORY_ID || AWARYJNA_KONFIGURACJA.TICKET_CATEGORY_ID,
     PORT: parseInt(process.env.PORT) || 8080
 };
 
@@ -147,6 +149,7 @@ client.once(Events.ClientReady, async () => {
 
     const commands = [
         { name: 'ustawkanal', description: 'Wysyła zaawansowany panel weryfikacji' },
+        { name: 'ustawkanalticket', description: 'Wysyła profesjonalny panel ticketów' },
         { name: 'gpermban', description: 'Ban permanentny Roblox', options: [
             { name: 'id', description: 'ID Roblox', type: 3, required: true },
             { name: 'powod', description: 'Powód bana', type: 3, required: true }
@@ -186,6 +189,12 @@ client.on(Events.InteractionCreate, async (i) => {
                 }
                 return setupVerification(i);
             }
+            if (i.commandName === 'ustawkanalticket') {
+                if (!i.member.roles.cache.has(CONFIG.ROLE_ADMINISTRACJA)) {
+                    return i.reply({ content: "❌ Brak uprawnień administratorskich.", flags: MessageFlags.Ephemeral });
+                }
+                return setupTicketPanel(i);
+            }
             if (['gpermban', 'gtempban', 'gunban', 'odlaczkonto'].includes(i.commandName)) {
                 if (!i.member.roles.cache.has(CONFIG.ROLE_ADMINISTRACJA)) {
                     return i.reply({ content: "❌ Brak uprawnień do zarządzania blokadami.", flags: MessageFlags.Ephemeral });
@@ -202,12 +211,20 @@ client.on(Events.InteractionCreate, async (i) => {
             if (i.commandName === 'sprawdz') return handleCheckPlayer(i);
         }
 
+        if (i.isStringSelectMenu()) {
+            if (i.customId === 'ticket_select') return handleTicketCreation(i);
+        }
+
         if (i.isButton()) {
             if (i.customId === 'start_verify') return startVerifyModal(i);
             if (i.customId === 'check_profile') return checkRobloxProfile(i);
             if (i.customId.startsWith('acc_') || i.customId.startsWith('rej_')) return adminDecision(i);
             if (i.customId.startsWith('appeal_btn_')) return startAppealModal(i);
             if (i.customId.startsWith('app_acc_') || i.customId.startsWith('app_rej_')) return adminAppealDecision(i);
+            if (i.customId === 'close_ticket') {
+                await i.reply("🔒 Zamykanie ticketu za 3 sekundy...");
+                setTimeout(() => i.channel.delete().catch(() => {}), 3000);
+            }
         }
 
         if (i.isModalSubmit()) {
@@ -218,6 +235,97 @@ client.on(Events.InteractionCreate, async (i) => {
         console.error("❌ Błąd interakcji:", err); 
     }
 });
+
+// ====================== PANEL TICKETÓW (NOWOŚĆ) ======================
+
+async function setupTicketPanel(i) {
+    const embed = new EmbedBuilder()
+        .setTitle('📩 Centrum Pomocy — Łomża Roleplay')
+        .setDescription(
+            'Potrzebujesz pomocy administracji? Chcesz zgłosić gracza, złożyć wniosek o CK/FCK lub masz problem z pojazdem?\n\n' +
+            '**Wybierz odpowiednią kategorię z menu rozwijanego poniżej**, aby otworzyć nowy formularz kontaktowy (Ticket). ' +
+            'Nasz zespół odpowie tak szybko, jak to możliwe.'
+        )
+        .setColor('#2b2d31')
+        .setThumbnail(i.guild.iconURL({ dynamic: true }))
+        .setFooter({ text: 'Łomża Roleplay • System Ticketów', iconURL: i.guild.iconURL() });
+
+    const menu = new StringSelectMenuBuilder()
+        .setCustomId('ticket_select')
+        .setPlaceholder('Wybierz powód otwarcia ticketu...')
+        .addOptions([
+            { label: 'Pomoc Ogólna', description: 'Pytania dotyczące serwera, błędy lub pomoc techniczna', value: 'pomoc_ogolna', emoji: '❓' },
+            { label: 'CK / FCK', description: 'Wnioski dotyczące uśmiercenia postaci', value: 'ck_fck', emoji: '💀' },
+            { label: 'Weryfikacja', description: 'Problemy z weryfikacją konta Roblox', value: 'weryfikacja', emoji: '🔑' },
+            { label: 'Pojazdy', description: 'Zgłoszenia zbugowanych aut, zwroty, sprawy organizacyjne', value: 'pojazdy', emoji: '🚗' },
+            { label: 'Zgłoś Gracza', description: 'Skargi na graczy łamiących regulamin rozgrywki', value: 'zglos_gracza', emoji: '🚫' }
+        ]);
+
+    const row = new ActionRowBuilder().addComponents(menu);
+    await i.channel.send({ embeds: [embed], components: [row] });
+    await i.reply({ content: "✅ Pomyślnie utworzono panel ticketów.", flags: MessageFlags.Ephemeral });
+}
+
+async function handleTicketCreation(i) {
+    const option = i.values[0];
+    const categoryId = CONFIG.TICKET_CATEGORY_ID;
+    
+    let topicName = option.replace('_', '-');
+    let friendlyName = i.selectMenuOptions.find(o => o.value === option).label;
+
+    await i.deferReply({ flags: MessageFlags.Ephemeral });
+
+    // Tworzenie kanału z restrykcjami uprawnień
+    const ticketChannel = await i.guild.channels.create({
+        name: `🎫-${topicName}-${i.user.username}`,
+        type: ChannelType.GuildText,
+        parent: categoryId !== "TUTAJ_WPISZ_ID_KATEGORII_GDZIE_MAJA_TWORZYC_SIE_TICKETY" ? categoryId : null,
+        permissionOverwrites: [
+            {
+                id: i.guild.roles.everyone.id,
+                deny: [PermissionFlagsBits.ViewChannel]
+            },
+            {
+                id: i.user.id,
+                allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.AttachFiles, PermissionFlagsBits.ReadMessageHistory]
+            },
+            {
+                id: CONFIG.ROLE_ADMINISTRACJA,
+                allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.AttachFiles, PermissionFlagsBits.ReadMessageHistory]
+            }
+        ]
+    }).catch(err => {
+        console.error(err);
+        return null;
+    });
+
+    if (!ticketChannel) {
+        return i.editReply("❌ Nie udało się utworzyć ticketu. Upewnij się, że bot ma uprawnienia do zarządzania kanałami lub podana kategoria jest prawidłowa.");
+    }
+
+    const welcomeEmbed = new EmbedBuilder()
+        .setTitle(`🎫 Ticket: ${friendlyName}`)
+        .setDescription(
+            `Witaj ${i.user}! Otworzyłeś zgłoszenie w sprawie: **${friendlyName}**.\n` +
+            `Opisz swój problem dokładnie w tej wiadomości, podając wszelkie dowody (ss/clipy), aby przyspieszyć proces.\n\n` +
+            `• **Autor:** ${i.user}\n` +
+            `• **Kategoria:** \`${friendlyName}\``
+        )
+        .setColor('#107bc4')
+        .setTimestamp()
+        .setFooter({ text: 'Łomża Roleplay • Wsparcie', iconURL: i.guild.iconURL() });
+
+    const closeButton = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+            .setCustomId('close_ticket')
+            .setLabel('Zamknij ticket')
+            .setStyle(ButtonStyle.Danger)
+            .setEmoji('🔒')
+    );
+
+    await ticketChannel.send({ content: `${i.user} | <@&${CONFIG.ROLE_ADMINISTRACJA}>`, embeds: [welcomeEmbed], components: [closeButton] });
+    await i.editReply(`✅ Twój ticket został otwarty: ${ticketChannel}`);
+}
 
 // ====================== MAKSYMALNE /SPRAWDZ ======================
 
@@ -236,12 +344,10 @@ async function handleCheckPlayer(i) {
         .setColor('#2b2d31')
         .setTimestamp();
 
-    // 1. Sekcja Discord
     embed.addFields(
         { name: '👤 Dane Discord', value: `> **Wzmianka:** ${member}\n> **ID Konta:** \`${member.id}\`\n> **Utworzono:** ${formatPolishDate(member.user.createdAt)}\n> **Dołączył:** ${formatPolishDate(member.joinedAt)}`, inline: false }
     );
 
-    // 2. Sekcja Roblox
     if (robloxId) {
         const roblox = await getRobloxInfo(robloxId);
         if (roblox.success) {
@@ -251,7 +357,6 @@ async function handleCheckPlayer(i) {
                 { name: '🎮 Połączone Konto Roblox', value: `> **Nazwa użytkownika:** \`${roblox.data.name}\`\n> **Wyświetlana nazwa:** \`${roblox.data.displayName}\`\n> **ID Konta:** \`${robloxId}\`\n> **Data rejestracji:** ${formatPolishDate(roblox.data.created)}\n> **Wiek konta:** ${ageInfo.text}\n> **Profil:** [Kliknij aby otworzyć](https://www.roblox.com/users/${robloxId}/profile)`, inline: false }
             );
 
-            // 3. Sekcja Blokad
             const banData = await db.get(`ban_${robloxId}`);
             if (banData) {
                 let statusBana = `> **Typ:** Permanentny 🚫\n`;
@@ -299,7 +404,7 @@ async function handleUnlink(i) {
     i.reply({ content: "❌ Podane ID konta nie figuruje w naszej bazie danych.", flags: MessageFlags.Ephemeral });
 }
 
-// ====================== ROZBUDOWANA WERYFIKACJA (LOGI + PANELE) ======================
+// ====================== WERYFIKACJA ======================
 
 async function setupVerification(i) {
     const embed = new EmbedBuilder()
@@ -449,7 +554,7 @@ async function adminDecision(i) {
     }
 }
 
-// ====================== ODNOWIONY SYSTEM BANÓW (STYL ZE ZDJĘCIA) ======================
+// ====================== SYSTEM BANÓW ======================
 
 async function handleBan(i, perm) {
     await i.deferReply({ flags: MessageFlags.Ephemeral });
@@ -483,7 +588,7 @@ async function handleBan(i, perm) {
         
         const embed = new EmbedBuilder()
             .setTitle('🔐 Zbanowano Gracza')
-            .setColor('#107bc4') // Oryginalny błękitny odcień paska ze zdjęcia
+            .setColor('#107bc4')
             .setThumbnail(roblox.avatar || 'https://www.roblox.com/headshot-thumbnail/image?userId=1&width=420&height=420&format=png')
             .setDescription(
                 `Zbanowany gracz nie może grać do czasu upłynięcia blokady.\n` +
@@ -588,7 +693,7 @@ async function adminAppealDecision(i) {
         await i.update({ content: `✅ Zaakceptowano odwołanie gracza. Zdjęto blokadę z konta Roblox ID: ${rid}.`, components: [] });
     } else {
         if (member) {
-            await member.send("❌ Twoja apelacja została **odrzucona** przez zarząd projektu. Blokada pozostaje aktywna.").catch(() => {});
+            await member.send("❌ Twoja apelacja została **odrzucona** przez zarząd projektu. Blokada pozostaje activa.").catch(() => {});
         }
         await i.update({ content: `❌ Odrzucono odwołanie gracza. Blokada dla konta Roblox ID: ${rid} pozostaje bez zmian.`, components: [] });
     }
