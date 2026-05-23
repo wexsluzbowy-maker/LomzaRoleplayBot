@@ -1,13 +1,13 @@
 // ========================================================
 // LOMZA RP - ULTIMATE VERIFICATION BOT 2025
-// Wersja: Finalna (Status Graczy + Apelacje + Logi + CHAN SEND FIX)
+// Wersja: Finalna (Status Graczy + Apelacje + Logi + ENV FALLBACK FIX)
 // ========================================================
 
 const {
     Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder,
     ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder,
     TextInputStyle, MessageFlags, Events, Collection, ActivityType, Partials,
-    ChannelType // DODANO: Import typu kanałów dla weryfikacji
+    ChannelType
 } = require('discord.js');
 
 const axios = require('axios');
@@ -15,16 +15,29 @@ const { QuickDB } = require('quick.db');
 const express = require('express');
 require('dotenv').config();
 
+// ========================================================
+// ⚠️ TUTAJ WPISZ SWOJE ID JEŚLI PLIK .ENV NIE DZIAŁA ⚠️
+// ========================================================
+const AWARYJNA_KONFIGURACJA = {
+    GUILD_ID: "TUTAJ_WPISZ_ID_SERWERA",
+    ROLE_ADMINISTRACJA: "TUTAJ_WPISZ_ID_ROLI_ADMINA",
+    ROLE_OBYWATEL: "TUTAJ_WPISZ_ID_ROLI_GRACZA",
+    LOGS_BAN: "TUTAJ_WPISZ_ID_KANALU_BANOW",
+    LOGS_VERIFY: "TUTAJ_WPISZ_ID_KANALU_LOGOW_WERYFIKACJI",
+    LOGS_CHECK: "TUTAJ_WPISZ_ID_KANALU_DO_AKCEPTACJI", // To o ten kanał prosi bot
+    LOGS_APPEAL: "TUTAJ_WPISZ_ID_KANALU_APELACJI"
+};
+
 const CONFIG = {
-    TOKEN: process.env.TOKEN,
-    GUILD_ID: process.env.GUILD_ID,
-    ROLE_ADMINISTRACJA: process.env.ROLE_ADMINISTRACJA,
-    ROLE_OBYWATEL: process.env.ROLE_OBYWATEL,
-    LOGS_BAN: process.env.LOGS_BAN,
-    LOGS_VERIFY: process.env.LOGS_VERIFY,
-    LOGS_CHECK: process.env.LOGS_CHECK,
-    LOGS_APPEAL: process.env.LOGS_APPEAL,
-    PORT: parseInt(process.env.PORT) || 3000
+    TOKEN: process.env.TOKEN, // Token musi zostać w .env ze względów bezpieczeństwa
+    GUILD_ID: process.env.GUILD_ID || AWARYJNA_KONFIGURACJA.GUILD_ID,
+    ROLE_ADMINISTRACJA: process.env.ROLE_ADMINISTRACJA || AWARYJNA_KONFIGURACJA.ROLE_ADMINISTRACJA,
+    ROLE_OBYWATEL: process.env.ROLE_OBYWATEL || AWARYJNA_KONFIGURACJA.ROLE_OBYWATEL,
+    LOGS_BAN: process.env.LOGS_BAN || AWARYJNA_KONFIGURACJA.LOGS_BAN,
+    LOGS_VERIFY: process.env.LOGS_VERIFY || AWARYJNA_KONFIGURACJA.LOGS_VERIFY,
+    LOGS_CHECK: process.env.LOGS_CHECK || AWARYJNA_KONFIGURACJA.LOGS_CHECK,
+    LOGS_APPEAL: process.env.LOGS_APPEAL || AWARYJNA_KONFIGURACJA.LOGS_APPEAL,
+    PORT: parseInt(process.env.PORT) || 8080
 };
 
 const db = new QuickDB({ filePath: "lomza_rp_ultimate.sqlite" });
@@ -277,7 +290,6 @@ async function handleVerifySubmit(i) {
     await i.reply({ embeds: [embed], components: [row], flags: MessageFlags.Ephemeral });
 }
 
-// --- POPRAWIONA I ABSOLUTNIE ZABEZPIECZONA FUNKCJA ---
 async function checkRobloxProfile(i) {
     const session = pendingVerifications.get(i.user.id);
     if (!session) return i.reply({ content: "❌ Błąd sesji.", flags: MessageFlags.Ephemeral });
@@ -291,13 +303,12 @@ async function checkRobloxProfile(i) {
         const guild = i.guild || await client.guilds.fetch(CONFIG.GUILD_ID).catch(() => null);
         
         if (!guild) {
-            console.error("❌ Nie można uzyskać dostępu do serwera. Sprawdź GUILD_ID w .env!");
+            console.error("❌ Nie można uzyskać dostępu do serwera. Sprawdź GUILD_ID!");
             return i.reply({ content: "❌ Błąd konfiguracji serwera bota.", flags: MessageFlags.Ephemeral });
         }
 
         const chan = await guild.channels.fetch(CONFIG.LOGS_CHECK).catch(() => null);
         
-        // POPRAWA BŁĘDU: Sprawdzamy czy kanał istnieje ORAZ czy jest kanałem tekstowym (.isTextBased())
         if (chan && typeof chan.send === 'function' && chan.isTextBased()) {
             const embed = new EmbedBuilder()
                 .setTitle('Nowa Weryfikacja')
@@ -312,8 +323,8 @@ async function checkRobloxProfile(i) {
             );
             await chan.send({ embeds: [embed], components: [row] });
         } else {
-            console.error(`❌ Podane ID kanału LOGS_CHECK (${CONFIG.LOGS_CHECK}) nie odnosi się do kanału tekstowego lub bot nie ma uprawnień do pisania.`);
-            return i.reply({ content: "❌ ID kanału weryfikacji w .env nie prowadzi do prawidłowego kanału tekstowego!", flags: MessageFlags.Ephemeral });
+            console.error(`❌ Podane ID kanału LOGS_CHECK (${CONFIG.LOGS_CHECK}) jest niepoprawne lub bot nie ma uprawnień.`);
+            return i.reply({ content: `❌ Błąd: ID kanału LOGS_CHECK (${CONFIG.LOGS_CHECK}) jest niepoprawne!`, flags: MessageFlags.Ephemeral });
         }
     } catch (error) {
         console.error("❌ Błąd krytyczny w checkRobloxProfile:", error);
