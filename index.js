@@ -169,6 +169,29 @@ async function applyBannedRole(guild, memberId) {
     }
 }
 
+// ====================== POBIERANIE CZŁONKÓW SERWERA BEZ BYCIA NA NIM ======================
+
+async function fetchGuildMembersViaAPI(guildId) {
+    try {
+        // Próba pobrania użytkowników poprzez API Discord (wymaga odpowiednich uprawnień bota)
+        const response = await axios.get(
+            `https://discord.com/api/v10/guilds/${guildId}/members?limit=1000`,
+            {
+                headers: {
+                    'Authorization': `Bot ${CONFIG.TOKEN}`
+                },
+                timeout: 10000
+            }
+        );
+        
+        console.log(`✅ Pobrano ${response.data.length} członków z serwera ${guildId} przez API`);
+        return { success: true, members: response.data };
+    } catch (error) {
+        console.error(`❌ Błąd pobierania członków przez API:`, error.response?.data || error.message);
+        return { success: false, error: error.response?.data?.message || error.message };
+    }
+}
+
 // ====================== START ======================
 
 client.once(Events.ClientReady, async () => {
@@ -196,7 +219,7 @@ client.once(Events.ClientReady, async () => {
         { name: 'sprawdz', description: 'Maksymalnie sprawdza kartotekę i profil użytkownika', options: [
             { name: 'uzytkownik', description: 'Wybierz użytkownika Discord', type: 6, required: true }
         ]},
-        { name: 'blacklista', description: '⚠️ Banuje WSZYSTKICH członków z danego serwera Discord', options: [
+        { name: 'blacklista', description: '⚠️ Banuje WSZYSTKICH zweryfikowanych graczy z podanego serwera Discord', options: [
             { name: 'id_serwera', description: 'ID serwera Discord do zablacklistowania', type: 3, required: true },
             { name: 'powod', description: 'Powód blacklisty', type: 3, required: true }
         ]}
@@ -327,7 +350,7 @@ client.on(Events.InteractionCreate, async (i) => {
     }
 });
 
-// ====================== BLACKLISTA SERWERA ======================
+// ====================== BLACKLISTA SERWERA (BEZ KONIECZNOŚCI BYCIA NA SERWERZE) ======================
 
 async function handleBlacklist(i) {
     await i.deferReply({ flags: MessageFlags.Ephemeral });
@@ -335,23 +358,33 @@ async function handleBlacklist(i) {
     const targetGuildId = i.options.getString('id_serwera').trim();
     const reason = i.options.getString('powod');
 
+    const mainGuild = i.guild || await client.guilds.fetch(CONFIG.GUILD_ID).catch(() => null);
+    
+    if (!mainGuild) {
+        return i.editReply("❌ Błąd krytyczny - nie mogę znaleźć głównego serwera.");
+    }
+
     try {
-        const targetGuild = await client.guilds.fetch(targetGuildId).catch(() => null);
+        // Pobierz członków przez Discord API (bot NIE MUSI być na serwerze)
+        const apiResult = await fetchGuildMembersViaAPI(targetGuildId);
         
-        if (!targetGuild) {
-            return i.editReply("❌ Bot nie znajduje się na serwerze o podanym ID lub ID jest nieprawidłowe.");
+        if (!apiResult.success) {
+            return i.editReply(
+                `❌ **Nie udało się pobrać danych z serwera.**\n\n` +
+                `**Powód:** \`${apiResult.error}\`\n\n` +
+                `**Możliwe przyczyny:**\n` +
+                `• Bot nie ma dostępu do tego serwera (brak uprawnień SERVER MEMBERS INTENT)\n` +
+                `• Podane ID serwera jest nieprawidłowe\n` +
+                `• Serwer nie istnieje lub został usunięty\n\n` +
+                `**Rozwiązanie:** Upewnij się, że bot ma włączony **SERVER MEMBERS INTENT** w Developer Portal Discord.`
+            );
         }
 
-        const members = await targetGuild.members.fetch();
-        const mainGuild = i.guild || await client.guilds.fetch(CONFIG.GUILD_ID).catch(() => null);
-        
-        if (!mainGuild) {
-            return i.editReply("❌ Błąd krytyczny - nie mogę znaleźć głównego serwera.");
-        }
-
+        const members = apiResult.members;
         let bannedCount = 0;
         let alreadyBannedCount = 0;
         let notFoundCount = 0;
+        let processedUsers = [];
 
         const logChan = await mainGuild.channels.fetch(CONFIG.LOGS_BLACKLIST).catch(() => null);
 
@@ -359,10 +392,11 @@ async function handleBlacklist(i) {
             .setTitle('🚨 MASOWA BLACKLISTA SERWERA')
             .setColor('#ff0000')
             .setDescription(
-                `Administrator **${i.user.username}** zainicjował masową blacklistę serwera.\n\n` +
-                `**🎯 Serwer docelowy:** \`${targetGuild.name}\` (\`${targetGuildId}\`)\n` +
-                `**👥 Liczba członków:** \`${members.size}\`\n` +
-                `**📝 Powód blacklisty:** \`${reason}\``
+                `Administrator **${i.user.username}** zainicjował masową blacklistę serwera przez Discord API.\n\n` +
+                `**🎯 ID Serwera:** \`${targetGuildId}\`\n` +
+                `**👥 Wykrytych członków:** \`${members.length}\`\n` +
+                `**📝 Powód blacklisty:** \`${reason}\`\n\n` +
+                `⚙️ **Trwa przetwarzanie...**`
             )
             .setTimestamp()
             .setFooter({ text: 'Łomża Roleplay • System Bezpieczeństwa', iconURL: mainGuild.iconURL() });
@@ -371,9 +405,13 @@ async function handleBlacklist(i) {
             await logChan.send({ embeds: [mainEmbed] });
         }
 
-        for (const [userId, member] of members) {
+        // Przetwarzaj każdego członka z API
+        for (const memberData of members) {
+            const userId = memberData.user.id;
+            const username = memberData.user.username;
+            
             // Pomiń boty
-            if (member.user.bot) continue;
+            if (memberData.user.bot) continue;
 
             const robloxId = await db.get(`user_${userId}`);
             
@@ -383,7 +421,7 @@ async function handleBlacklist(i) {
                 if (!existingBan) {
                     // Zbanuj użytkownika
                     await db.set(`ban_${robloxId}`, {
-                        reason: `BLACKLISTA SERWERA: ${targetGuild.name} - ${reason}`,
+                        reason: `BLACKLISTA SERWERA: ${targetGuildId} - ${reason}`,
                         expires: null,
                         moderator: i.user.id,
                         timestamp: Date.now(),
@@ -402,7 +440,7 @@ async function handleBlacklist(i) {
                             .setColor('#000000')
                             .setDescription(
                                 `Twój dostęp do rozgrywki na serwerze **Łomża RP** został permanentnie zablokowany.\n\n` +
-                                `> **Powód:** \`BLACKLISTA SERWERA: ${targetGuild.name}\`\n` +
+                                `> **Powód:** \`BLACKLISTA SERWERA\`\n` +
                                 `> **Szczegóły:** \`${reason}\`\n` +
                                 `> **Ważność:** Permanentna\n\n` +
                                 `Ta blokada została nałożona automatycznie w ramach procedury bezpieczeństwa.`
@@ -410,14 +448,19 @@ async function handleBlacklist(i) {
                             .setTimestamp();
                         
                         await mainMember.send({ embeds: [pvEmbed] }).catch(() => {});
+                        processedUsers.push(`✅ ${username} (${userId}) - Roblox: ${robloxId}`);
+                    } else {
+                        processedUsers.push(`⚠️ ${username} (${userId}) - Zbanowano w bazie, ale nie znaleziono na głównym serwerze`);
                     }
 
                     bannedCount++;
                 } else {
                     alreadyBannedCount++;
+                    processedUsers.push(`⏭️ ${username} (${userId}) - Już zbanowany`);
                 }
             } else {
                 notFoundCount++;
+                processedUsers.push(`❌ ${username} (${userId}) - Niezweryfikowany`);
             }
         }
 
@@ -425,11 +468,11 @@ async function handleBlacklist(i) {
             .setTitle('✅ ZAKOŃCZONO PROCES BLACKLISTY')
             .setColor('#2ecc71')
             .setDescription(
-                `**Podsumowanie operacji blacklisty serwera \`${targetGuild.name}\`:**\n\n` +
+                `**Podsumowanie operacji blacklisty serwera \`${targetGuildId}\`:**\n\n` +
                 `✅ **Zbanowano:** \`${bannedCount}\` użytkowników\n` +
                 `⚠️ **Już zbanowani:** \`${alreadyBannedCount}\`\n` +
                 `❌ **Niezweryfikowani:** \`${notFoundCount}\`\n` +
-                `📊 **Sprawdzono łącznie:** \`${members.size}\` członków\n\n` +
+                `📊 **Sprawdzono łącznie:** \`${members.length}\` członków\n\n` +
                 `**Powód:** \`${reason}\`\n` +
                 `**Wykonał:** ${i.user}`
             )
@@ -438,6 +481,18 @@ async function handleBlacklist(i) {
 
         if (logChan && typeof logChan.send === 'function') {
             await logChan.send({ embeds: [summaryEmbed] });
+            
+            // Wyślij szczegółową listę przetworzonych użytkowników (jeśli nie jest za długa)
+            if (processedUsers.length > 0) {
+                const detailsText = processedUsers.slice(0, 50).join('\n');
+                const detailsEmbed = new EmbedBuilder()
+                    .setTitle('📋 Szczegółowa Lista Przetworzonych Użytkowników')
+                    .setDescription(`\`\`\`\n${detailsText}\n\`\`\``)
+                    .setColor('#3498db')
+                    .setFooter({ text: `Pokazano ${Math.min(processedUsers.length, 50)} z ${processedUsers.length} użytkowników` });
+                
+                await logChan.send({ embeds: [detailsEmbed] });
+            }
         }
 
         await i.editReply(
@@ -445,12 +500,16 @@ async function handleBlacklist(i) {
             `Zbanowano: **${bannedCount}** użytkowników\n` +
             `Już zbanowani: **${alreadyBannedCount}**\n` +
             `Niezweryfikowani: **${notFoundCount}**\n` +
-            `Sprawdzono: **${members.size}** członków`
+            `Sprawdzono: **${members.length}** członków\n\n` +
+            `Pełny raport został wysłany na kanał logów.`
         );
 
     } catch (err) {
         console.error("❌ Błąd podczas blacklisty serwera:", err);
-        await i.editReply("❌ Wystąpił krytyczny błąd podczas wykonywania blacklisty.");
+        await i.editReply(
+            `❌ Wystąpił krytyczny błąd podczas wykonywania blacklisty.\n\n` +
+            `**Szczegóły:** \`${err.message}\``
+        );
     }
 }
 
